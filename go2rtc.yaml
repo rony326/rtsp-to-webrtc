@@ -1,0 +1,6 @@
+streams:
+  cam1: rtsp://root:password@192.168.1.123/axis-media/media.amp
+
+api:
+  listen: ":1984"
+  origin: "*"        # CORS fix - erlaubt Zugriff von Port 8080

@@ -1,0 +1,25 @@
+{
+  "streams": [
+    {
+      "id": "cam1",
+      "name": "Eingang",
+      "camera_url": "rtsp://admin:password@192.168.1.10:554/stream1",
+      "standby_video": "standby/loop.mp4",
+      "hls_segment_duration": 2
+    },
+    {
+      "id": "cam2",
+      "name": "Parkplatz",
+      "camera_url": "rtsp://admin:password@192.168.1.11:554/stream1",
+      "standby_video": "standby/loop.mp4",
+      "hls_segment_duration": 2
+    },
+    {
+      "id": "cam3",
+      "name": "Serverraum",
+      "camera_url": "rtsp://admin:password@192.168.1.12:554/stream1",
+      "standby_video": "standby/loop.mp4",
+      "hls_segment_duration": 2
+    }
+  ]
+}

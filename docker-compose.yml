@@ -1,0 +1,27 @@
+services:
+  stream-manager:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    volumes:
+      - ./backend/config.json:/app/config.json:ro
+      - ./standby:/app/standby:ro
+      - hls_data:/tmp/hls
+    environment:
+      - HTTP_PORT=8080
+      - TCP_PORT=9000
+      - HLS_ROOT=/tmp/hls
+      - CONFIG_PATH=/app/config.json
+      - STATIC_DIR=/app/frontend
+
+  go2rtc:
+    image: alexxit/go2rtc
+    restart: unless-stopped
+    network_mode: host        # Pflicht: WebRTC UDP + kein CORS-Problem
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+
+volumes:
+  hls_data:

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Stream Control</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+
+  :root {
+    --bg:      #0a0a0b;
+    --surface: #111114;
+    --panel:   #18181c;
+    --border:  #2a2a32;
+    --accent:  #e8ff47;
+    --red:     #ff4757;
+    --dim:     #4a4a58;
+    --text:    #d4d4e0;
+    --subdued: #6a6a7a;
+    --mono:    'IBM Plex Mono', monospace;
+    --sans:    'IBM Plex Sans', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .logo em { color: var(--dim); font-style: normal; font-weight: 400; }
+  #sys-info { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--subdued); }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  main { flex:1; padding: 22px 28px; display:flex; flex-direction:column; gap:18px; overflow-y:auto; }
+
+  .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .tlabel  { font-family:var(--mono); font-size:11px; color:var(--subdued); letter-spacing:.1em; text-transform:uppercase; }
+  .btn {
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    padding:7px 16px; border:1px solid var(--border); background:var(--panel); color:var(--subdued); cursor:pointer; transition:all .15s;
+  }
+  .btn:hover { border-color:var(--accent); color:var(--accent); }
+  .btn.danger:hover { border-color:var(--red); color:var(--red); }
+  .btn-primary { background:var(--accent); color:#000; border-color:var(--accent); }
+  .btn-primary:hover { background:#d0e63c; color:#000; }
+
+  #grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(380px, 1fr)); gap:16px; }
+
+  .card {
+    background:var(--panel); border:1px solid var(--border);
+    display:flex; flex-direction:column;
+    transition: border-color .25s;
+  }
+  .card.live { border-color: var(--accent); }
+
+  .card-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; border-bottom:1px solid var(--border);
+  }
+  .card-title { font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; }
+  .card-id    { font-family:var(--mono); font-size:10px; color:var(--subdued); margin-left:8px; }
+
+  .badge {
+    font-family:var(--mono); font-size:10px; font-weight:600;
+    letter-spacing:.1em; text-transform:uppercase; padding:3px 9px;
+    transition: all .2s;
+  }
+  .badge-live    { background:var(--accent)22; color:var(--accent); border:1px solid var(--accent)55; }
+  .badge-standby { background:transparent; color:var(--dim); border:1px solid var(--border); }
+
+  /* Video stack */
+  .video-wrap { position:relative; aspect-ratio:16/9; background:#000; overflow:hidden; }
+
+  .video-wrap video,
+  .video-wrap .webrtc-wrap {
+    position:absolute; inset:0; width:100%; height:100%;
+    transition: opacity .15s ease;
+  }
+  .video-wrap video { object-fit:cover; }
+  .video-wrap .webrtc-wrap video { position:static; width:100%; height:100%; object-fit:cover; }
+
+  /* Standby sichtbar im Standby-Modus */
+  .v-standby { z-index:1; opacity:1; }
+  .v-live     { z-index:2; opacity:0; }
+
+  .card.live .v-live    { opacity:1; }
+  .card.live .v-standby { opacity:0; }
+
+  .overlay-rec {
+    position:absolute; top:10px; right:12px; z-index:10;
+    display:flex; align-items:center; gap:5px;
+    font-family:var(--mono); font-size:10px; color:var(--red);
+    opacity:0; transition:opacity .3s; pointer-events:none;
+  }
+  .card.live .overlay-rec { opacity:1; }
+  .recdot { width:6px; height:6px; border-radius:50%; background:var(--red); box-shadow:0 0 6px var(--red); animation:blink .9s infinite; }
+
+  .overlay-id {
+    position:absolute; bottom:8px; left:10px; z-index:10;
+    font-family:var(--mono); font-size:10px; color:rgba(255,255,255,.4);
+    text-transform:uppercase; pointer-events:none;
+  }
+
+  /* Latenz-Badge */
+  .latency-badge {
+    position:absolute; bottom:8px; right:10px; z-index:10;
+    font-family:var(--mono); font-size:9px; letter-spacing:.06em;
+    padding:2px 6px;
+    background: rgba(0,0,0,.6);
+    color: var(--subdued);
+    border: 1px solid var(--border);
+    pointer-events:none;
+    opacity:0; transition:opacity .3s;
+  }
+  .card.live .latency-badge { opacity:1; }
+
+  /* WebRTC connecting spinner */
+  .webrtc-status {
+    position:absolute; inset:0; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,.7);
+    font-family:var(--mono); font-size:11px; color:var(--subdued);
+    opacity:0; transition:opacity .3s; pointer-events:none;
+  }
+  .webrtc-status.show { opacity:1; }
+
+  .card-ctrl { display:flex; border-top:1px solid var(--border); }
+  .cbtn {
+    flex:1; font-family:var(--mono); font-size:11px; font-weight:600;
+    letter-spacing:.07em; text-transform:uppercase;
+    padding:9px 0; border:none; border-right:1px solid var(--border);
+    background:transparent; color:var(--subdued); cursor:pointer; transition:all .15s;
+  }
+  .cbtn:last-child { border-right:none; }
+  .cbtn:hover { background:var(--surface); color:var(--text); }
+  .cbtn.hl-live    { color:var(--accent); }
+  .cbtn.hl-standby { color:var(--subdued); }
+
+  .tcp-panel { background:var(--surface); border:1px solid var(--border); padding:16px 20px; }
+  .tcp-panel h3 { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--subdued); margin-bottom:12px; }
+  .cmd-table { display:grid; grid-template-columns:auto 1fr; gap:6px 18px; }
+  .cmd-k { font-family:var(--mono); font-size:12px; color:var(--accent); white-space:nowrap; }
+  .cmd-v { font-family:var(--mono); font-size:11px; color:var(--subdued); align-self:center; }
+
+  #toast {
+    position:fixed; bottom:20px; right:24px;
+    font-family:var(--mono); font-size:12px;
+    padding:9px 18px; background:var(--panel); border:1px solid var(--accent); color:var(--accent);
+    opacity:0; transform:translateY(8px); transition:all .2s; pointer-events:none; z-index:999;
+  }
+  #toast.show { opacity:1; transform:translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Stream<em>/</em>Control <em style="font-size:10px;margin-left:6px">WebRTC</em></div>
+  <div id="sys-info"><div class="pulse"></div><span id="sys-txt">VERBINDE…</span></div>
+</header>
+
+<main>
+  <div class="toolbar">
+    <span class="tlabel">Global:</span>
+    <button class="btn btn-primary" onclick="globalAction('live')">▶ Alle Live</button>
+    <button class="btn danger"      onclick="globalAction('standby')">◼ Alle Standby</button>
+  </div>
+  <div id="grid"></div>
+  <div class="tcp-panel">
+    <h3>TCP — Port 9000 &nbsp;/&nbsp; REST — Port 8080</h3>
+    <div class="cmd-table">
+      <span class="cmd-k">{"action":"live","stream":"cam1"}</span>   <span class="cmd-v">cam1 → Live (WebRTC, &lt;500ms)</span>
+      <span class="cmd-k">{"action":"standby","stream":"cam1"}</span><span class="cmd-v">cam1 → Standbild (HLS)</span>
+      <span class="cmd-k">{"action":"toggle","stream":"cam1"}</span> <span class="cmd-v">cam1 umschalten</span>
+      <span class="cmd-k">POST /api/streams/cam1/toggle</span>       <span class="cmd-v">via HTTP (Node-RED etc.)</span>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ─── go2rtc WebRTC Client ─────────────────────────────────────────────────────
+// Minimale WebRTC-Implementierung die go2rtc's HTTP WHEP-Endpoint nutzt
+// go2rtc läuft auf Port 1984
+
+const GO2RTC_URL = '';  // Proxy via stream-manager, kein CORS
+
+class WebRTCPlayer {
+  constructor(videoEl, streamName) {
+    this.video      = videoEl;
+    this.stream     = streamName;
+    this.pc         = null;
+    this.retryTimer = null;
+    this.active     = false;
+  }
+
+  async start() {
+    this.active = true;
+    await this._connect();
+  }
+
+  stop() {
+    this.active = false;
+    clearTimeout(this.retryTimer);
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+    this.video.srcObject = null;
+  }
+
+  async _connect() {
+    if (!this.active) return;
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        bundlePolicy: 'max-bundle',
+      });
+      this.pc = pc;
+
+      pc.ontrack = e => {
+        if (this.video.srcObject !== e.streams[0]) {
+          this.video.srcObject = e.streams[0];
+          this.video.play().catch(() => {});
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (['disconnected','failed','closed'].includes(pc.iceConnectionState)) {
+          this._retry();
+        }
+      };
+
+      // Transceivers für Video + Audio hinzufügen
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // ICE candidates sammeln
+      await new Promise(res => {
+        if (pc.iceGatheringState === 'complete') { res(); return; }
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') res();
+        };
+        setTimeout(res, 3000); // max 3s warten
+      });
+
+      // WHEP Offer an go2rtc senden
+      const resp = await fetch(`${GO2RTC_URL}/api/webrtc?src=${this.stream}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: pc.localDescription.sdp,
+      });
+
+      if (!resp.ok) throw new Error(`go2rtc HTTP ${resp.status}`);
+
+      const answerSdp = await resp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      console.log(`[WebRTC] ${this.stream} connected`);
+
+    } catch(e) {
+      console.warn(`[WebRTC] ${this.stream} error:`, e.message);
+      this._retry();
+    }
+  }
+
+  _retry() {
+    if (!this.active) return;
+    if (this.pc) { this.pc.close(); this.pc = null; }
+    this.video.srcObject = null;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => this._connect(), 3000);
+  }
+}
+
+// ─── HLS Player ───────────────────────────────────────────────────────────────
+const hlsPlayers  = {};
+const webrtcPlayers = {};
+const esources    = {};
+
+function attachHls(videoEl, hlsUrl, key) {
+  if (hlsPlayers[key]) { hlsPlayers[key].destroy(); delete hlsPlayers[key]; }
+  if (!Hls.isSupported()) {
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = hlsUrl; videoEl.play().catch(()=>{});
+    }
+    return;
+  }
+  const h = new Hls({
+    liveSyncDurationCount: 2,
+    liveMaxLatencyDurationCount: 4,
+    maxBufferLength: 6,
+    manifestLoadingRetryDelay: 500,
+    manifestLoadingMaxRetry: 999,
+    levelLoadingRetryDelay: 500,
+    levelLoadingMaxRetry: 999,
+    fragLoadingRetryDelay: 500,
+    fragLoadingMaxRetry: 6,
+  });
+  h.loadSource(hlsUrl);
+  h.attachMedia(videoEl);
+  h.on(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(()=>{}));
+  h.on(Hls.Events.ERROR, (ev, data) => {
+    if (data.fatal) {
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) setTimeout(() => h.startLoad(), 1000);
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) h.recoverMediaError();
+      else setTimeout(() => attachHls(videoEl, hlsUrl, key), 3000);
+    }
+  });
+  hlsPlayers[key] = h;
+}
+
+// ─── Card ─────────────────────────────────────────────────────────────────────
+function createCard(s) {
+  const isLive = s.mode === 'live';
+  const div = document.createElement('div');
+  div.className = 'card' + (isLive ? ' live' : '');
+  div.id = 'card-' + s.id;
+  div.innerHTML = `
+    <div class="card-head">
+      <div>
+        <span class="card-title">${s.name}</span>
+        <span class="card-id">#${s.id}</span>
+      </div>
+      <span class="badge ${isLive?'badge-live':'badge-standby'}" id="badge-${s.id}">
+        ${isLive?'LIVE':'STANDBY'}
+      </span>
+    </div>
+    <div class="video-wrap">
+      <video class="v-standby" id="vsb-${s.id}" autoplay muted playsinline loop></video>
+      <div class="v-live" id="vlv-wrap-${s.id}">
+        <video id="vlv-${s.id}" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      </div>
+      <div class="webrtc-status" id="wstatus-${s.id}">⟳ Verbinde WebRTC…</div>
+      <div class="overlay-rec"><div class="recdot"></div>LIVE</div>
+      <div class="overlay-id">${s.id}</div>
+      <div class="latency-badge" id="latency-${s.id}">WebRTC &lt;500ms</div>
+    </div>
+    <div class="card-ctrl">
+      <button class="cbtn ${!isLive?'hl-standby':''}" id="bsb-${s.id}"
+        onclick="setMode('${s.id}','standby')">◼ Standby</button>
+      <button class="cbtn ${isLive?'hl-live':''}"     id="blv-${s.id}"
+        onclick="setMode('${s.id}','live')">▶ Live</button>
+      <button class="cbtn" onclick="setMode('${s.id}','toggle')">⇄ Toggle</button>
+    </div>
+  `;
+  return div;
+}
+
+function updateCard(s) {
+  const card  = document.getElementById('card-' + s.id);
+  if (!card) return;
+  const isLive = s.mode === 'live';
+  card.className = 'card' + (isLive ? ' live' : '');
+  document.getElementById('badge-' + s.id).className   = 'badge ' + (isLive ? 'badge-live' : 'badge-standby');
+  document.getElementById('badge-' + s.id).textContent = isLive ? 'LIVE' : 'STANDBY';
+  document.getElementById('bsb-' + s.id).className     = 'cbtn' + (!isLive ? ' hl-standby' : '');
+  document.getElementById('blv-' + s.id).className     = 'cbtn' + ( isLive ? ' hl-live'    : '');
+}
+
+// ─── SSE ──────────────────────────────────────────────────────────────────────
+function subscribeSSE(sid) {
+  if (esources[sid]) esources[sid].close();
+  const es = new EventSource(`/api/streams/${sid}/events`);
+  es.onmessage = e => updateCard(JSON.parse(e.data));
+  esources[sid] = es;
+}
+
+// ─── WebRTC connect/status ────────────────────────────────────────────────────
+function initWebRTC(s) {
+  const videoEl   = document.getElementById('vlv-' + s.id);
+  const statusEl  = document.getElementById('wstatus-' + s.id);
+
+  // Zeige "Verbinde" während WebRTC aufbaut
+  statusEl.classList.add('show');
+
+  const player = new WebRTCPlayer(videoEl, s.webrtc_src);
+  webrtcPlayers[s.id] = player;
+
+  // Verstecke Status sobald Video läuft
+  videoEl.addEventListener('playing', () => {
+    statusEl.classList.remove('show');
+  });
+
+  player.start();
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+async function init() {
+  let streams;
+  try {
+    streams = await (await fetch('/api/streams')).json();
+  } catch(e) {
+    document.getElementById('sys-txt').textContent = 'VERBINDUNGSFEHLER';
+    setTimeout(init, 3000);
+    return;
+  }
+
+  document.getElementById('sys-txt').textContent =
+    `${streams.length} STREAM${streams.length !== 1 ? 'S' : ''} — WebRTC LIVE`;
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  for (const s of streams) {
+    const card = createCard(s);
+    grid.appendChild(card);
+
+    // Standby: HLS
+    attachHls(document.getElementById('vsb-' + s.id), s.standby_url, s.id + '/standby');
+
+    // Live: WebRTC via go2rtc (immer verbunden, CSS blendet um)
+    initWebRTC(s);
+
+    // SSE für sofortigen Mode-Push
+    subscribeSSE(s.id);
+  }
+}
+
+async function setMode(id, mode) {
+  try {
+    const endpoint = mode === 'toggle'
+      ? `/api/streams/${id}/toggle`
+      : `/api/streams/${id}/${mode}`;
+    const s = await (await fetch(endpoint, {method:'POST'})).json();
+    updateCard(s);
+    toast(`${s.name} → ${s.mode.toUpperCase()}`);
+  } catch(e) { toast('Fehler: ' + e.message); }
+}
+
+async function globalAction(mode) {
+  const streams = await (await fetch('/api/streams')).json();
+  await Promise.all(streams.map(s => fetch(`/api/streams/${s.id}/${mode}`, {method:'POST'})));
+  const updated = await (await fetch('/api/streams')).json();
+  updated.forEach(updateCard);
+  toast(`Alle → ${mode.toUpperCase()}`);
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+init();
+</script>
+</body>
+</html>
